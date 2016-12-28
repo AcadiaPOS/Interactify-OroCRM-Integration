@@ -1,0 +1,13 @@
+parameters:
+    interactify_integration.activities_provider.class:  Interactify\Bundle\IntegrationBundle\Provider\ActivityProvider
+
+services:
+    interactify_integration.activities_provider:
+        class: %interactify_integration.activities_provider.class%
+        arguments:
+            - '@oro_activity.manager'
+            - '@doctrine.orm.entity_manager'
+
+#    interactify_integration.example:
+#        class: Interactify\Bundle\IntegrationBundle\Example
+#        arguments: [@service_id, "plain_value", %parameter%]

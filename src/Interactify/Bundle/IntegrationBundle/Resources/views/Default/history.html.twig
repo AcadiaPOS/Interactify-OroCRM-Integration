@@ -1,0 +1,9 @@
+{{ history }}
+
+{% for entry in history %}
+    <div class="history">
+        <span>TS: {{ entry.createdAt }}</span>
+        <span>Subject: {{ entry.subject }}</span>
+        <br/>
+    </div>
+{% endfor %}

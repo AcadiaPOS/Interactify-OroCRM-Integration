@@ -1,0 +1,12 @@
+security:
+    firewalls:
+        dev:
+             pattern: ^/interactify
+             security:                       false
+             anonymous:                      true
+        prod:
+             pattern: ^/interactify
+             security:                       false
+             anonymous:                      true
+
+

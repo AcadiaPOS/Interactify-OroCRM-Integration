@@ -1,0 +1,5 @@
+interactify_integration:
+    resource: "@InteractifyIntegrationBundle/Controller/DefaultController.php"
+    type:     annotation
+    prefix:   /interactify
+
