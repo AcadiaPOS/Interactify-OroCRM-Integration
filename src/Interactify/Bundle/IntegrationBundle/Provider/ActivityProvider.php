@@ -20,7 +20,8 @@ class ActivityProvider
         $this->em = $manager;
     }
 
-    public function getActivities($entity) {
+    public function getActivities($entity) 
+    {
         $entityClass = ClassUtils::getClass($entity);
         $items = $this->activityManager->getActivityAssociations($entityClass);
         $result = [];

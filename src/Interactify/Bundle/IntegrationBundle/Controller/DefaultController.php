@@ -35,54 +35,37 @@ class DefaultController extends Controller
         ]);
     }
 
-    private function findContactByEmail($email) 
-    {
-        $contactEmailClass = $this->container->getParameter('orocrm_contact.entity.email.class');
-        $contactEmailRepository = $this->getDoctrine()->getRepository($contactEmailClass);
-        $contactEmail = $contactEmailRepository->findOneBy(['email' => $email]);
-        if($contactEmail !== null) {
-            return $contactEmail->getOwner();
-        }
-    }
-
-    private function findContactByPhone($phone) 
-    {
-        $contactPhoneClass = $this->container->getParameter('orocrm_contact.entity.phone.class');
-        $contactPhoneRepository = $this->getDoctrine()->getRepository($contactPhoneClass);
-       
-        $filterCharacters = ['-',' ','(',')'];
-        $generatedCondition = "p.phone";
-        foreach($filterCharacters as $filterCharacter) {
-            $generatedCondition = "replace(".$generatedCondition.",'". $filterCharacter . "','')";
-            $phone = str_replace($filterCharacter, '', $phone);
-        }
-        $contactPhone = $contactPhoneRepository->createQueryBuilder('p')
-            ->where("$generatedCondition=:phone")
-            ->setParameter('phone', $phone)
-            ->getQuery()
-            ->setMaxResults(1)
-            ->getOneOrNullResult();
-        return $contactPhone ? $contactPhone->getOwner() : null;
-    }
-
     private function getCall($callClass,$contact,$owner,$callInfo)
     {
         $call = new $callClass();
         $call->setDuration($callInfo['duration']);
         $callStatus = $this->getDoctrine()
-            ->getRepository('OroCRMCallBundle:CallStatus')
+            ->getRepository('OroCallBundle:CallStatus')
             ->findOneByName('completed');
 
         $call->setCallStatus($callStatus);
         $callDirection = $this->getDoctrine()
-            ->getRepository('OroCRMCallBundle:CallDirection')
+            ->getRepository('OroCallBundle:CallDirection')
             ->findOneByName($callInfo['direction']);
         $call->setDirection($callDirection);
         $call->setSubject($callInfo['call_type']);
         $call->setPhoneNumber($callInfo['phone_number']);
         $call->setOwner($owner);
         $call->setNotes($callInfo['comment']);
+        $call->setOrganization($callInfo['organization']);
         return $call;
+    }
+
+    private function findUser()
+    {
+        $request = $this->container->get('request_stack')->getCurrentRequest();
+        $userManager = $this->get('oro_user.manager');
+        $email = $request->get('agent_email');
+        $user = $userManager->findUserByEmail($email);
+        if (!$user) {
+            $user = $userManager->findUserByUsername('admin');
+        }
+        return $user;
     }
 
     /**
@@ -95,37 +78,34 @@ class DefaultController extends Controller
             die('Required parameters missing');
         }
 
-        if($caller_id_type == 'email') {
-            $contact = $this->findContactByEmail($caller_id_value);
-        } else if($caller_id_type == 'phone') {
-            $contact = $this->findContactByPhone($caller_id_value);
-        }
-        if ($contact === null) {
+        $entityProvider = $this->get('interactify_integration.entities_provider');
+        $entities = $entityProvider->getEntities($caller_id_type,$caller_id_value);
+
+        if (!count($entities)) {
             return $this->responseNotFound();
         }
 
-        $userManager = $this->get('oro_user.manager');
-        $email = $request->get('agent_email');
-        $user = $userManager->findUserByEmail($email);
-        if (!$user) {
-            $user = $userManager->findUserByUsername('admin');
-        }
+        $user = $this->findUser();
 
-        $callClass = $this->container->getParameter('orocrm_call.call.entity.class');
+        $callClass = $this->container->getParameter('oro_call.call.entity.class');
+        $orgManager = $this->get('oro_organization.organization_manager');
+        $org = $orgManager->getEnabledUserOrganizationByName($user, '');
 
-        $call = $this->getCall($callClass,$contact,$user,[
+        $call = $this->getCall($callClass,$entity,$user,[
             'comment' => $request->get('comment'),
             'phone_number' => $caller_id_value,
             'call_type' =>  $request->get('call_type'),
             'direction' => $request->get('direction'),
-            'duration' => $request->get('duration')
+            'duration' => $request->get('duration'),
+            'organization' => $org
         ]);
-        $callActivityManager = $this->get('orocrm_call.call.activity.manager');
-        $callActivityManager->addAssociation($call,$contact);
-        $em = $this->getDoctrine()->getEntityManager();
-        $em->persist($call);
-        $em->flush();
-
+        foreach($entities as $entityType => $entity) {
+            $callActivityManager = $this->get('oro_call.call.activity.manager');
+            $callActivityManager->addAssociation($call,$entity);
+            $em = $this->getDoctrine()->getEntityManager();
+            $em->persist($call);
+            $em->flush();
+        }
         return $this->responseNotFound();
     }
 
@@ -144,73 +124,83 @@ class DefaultController extends Controller
     public function infoAction($key,$caller_id_type,$caller_id_value)
     {
         $provider = $this->get('interactify_integration.activities_provider');
+        $entityProvider = $this->get('interactify_integration.entities_provider');
 
         $validTypes = ['email' => 1, 'phone' => 1];
         if (!isset($validTypes[$caller_id_type])) {
             return $this->responseNotFound();
         }
-        if($caller_id_type == 'email') {
-            $contact = $this->findContactByEmail($caller_id_value);
-        } else if($caller_id_type == 'phone') {
-            $contact = $this->findContactByPhone($caller_id_value);
-        }
-        if ($contact === null) {
+
+        $entities = $entityProvider->getEntities($caller_id_type,$caller_id_value);
+        if (!count($entities)) {
             return $this->responseNotFound();
         }
-        $accounts = $contact->getAccounts();
-        $phones = $contact->getPhones();
-        $primary_phone = $alt1_phone = $alt2_phone = "";
-        foreach($phones as $phone) {
-            if ($phone->isPrimary()) $primary_phone = $phone->getPhone();
-            else if (empty($alt1_phone)) $alt1_phone = $phone->getPhone();
-            else $alt2_phone = $phone->getPhone();
-        }
-        $company = "";
-        foreach($accounts as $account) {
-            $company = $account->getName();
-        }
-        $addresses = $contact->getAddresses();
-        $primary_address = $secondary_address = "";
-        foreach($addresses as $address) {
-            if($address->isPrimary()) {
-                $primary_address = $address;
-            } else {
-                $secondary_address = $address;
-            }
-        }
-        $emails = $contact->getEmails();
-        $primary_email = $secondary_email = "";
-        foreach($emails as $email) {
-            if($email->isPrimary()) {
-                $primary_email = $email->getEmail();
-            } else {
-                $secondary_email = $email->getEmail();
-            }
-        }
+        foreach($entities as $entityType => $entity) {
 
-        $activitiesByClass = $provider->getActivities($contact);
-        $history = [];
-        foreach($activitiesByClass as $class => $activities) {
-            foreach($activities as $activity) {
-                $entry = [
-                    'createdAt' => $activity['createdAt']->format('Y.m.d m:i'),
-                    'subject' => $activity['subject']
-                ];
-                $history []= $entry;
+            if($entityType == 'contact') {
+                $accounts = $entity->getAccounts();
+                $company = "";
+                foreach($accounts as $account) {
+                    $company = $account->getName();
+                }
             }
-        }
+            if($entityType == 'lead') {
+                $company = $entity->getCompanyName();
+            }
+            $phones = $entity->getPhones();
+            $primary_phone = $alt1_phone = $alt2_phone = "";
+            foreach($phones as $phone) {
+                if ($phone->isPrimary()) $primary_phone = $phone->getPhone();
+                else if (empty($alt1_phone)) $alt1_phone = $phone->getPhone();
+                else $alt2_phone = $phone->getPhone();
+            }
 
-        $data = [
-            'contact' => $contact,
-            'company' => $company,
-            'primary_phone' => $primary_phone,
-            'alt1_phone' => $alt1_phone,
-            'alt2_phone' => $alt2_phone,
-            'primary_address' => $primary_address,
-            'secondary_address' => $secondary_address,
-            'primary_email' => $primary_email,
-            'secondary_email' => $secondary_email
-        ];
-        return $this->response($data, $history);
+            $addresses = $entity->getAddresses();
+            $primary_address = $secondary_address = "";
+            foreach($addresses as $address) {
+                if($address->isPrimary()) {
+                    $primary_address = $address;
+                } else {
+                    $secondary_address = $address;
+                }
+            }
+            $emails = $entity->getEmails();
+            $primary_email = $secondary_email = "";
+            foreach($emails as $email) {
+                if($email->isPrimary()) {
+                    $primary_email = $email->getEmail();
+                } else {
+                    $secondary_email = $email->getEmail();
+                }
+            }
+
+            $activitiesByClass = $provider->getActivities($entity);
+            $history = [];
+            foreach($activitiesByClass as $class => $activities) {
+                foreach($activities as $activity) {
+                    $entry = [
+                        'createdAt' => $activity['createdAt']->format('Y-m-d m:i'),
+                        'subject' => $activity['subject']
+                    ];
+                    $history []= $entry;
+                }
+            }
+            uasort($history, function($a,$b) {
+                return (strtotime($b['createdAt']) <=> strtotime($a['createdAt']));
+            });
+
+            $data = [
+                'contact' => $entity,
+                'company' => $company,
+                'primary_phone' => $primary_phone,
+                'alt1_phone' => $alt1_phone,
+                'alt2_phone' => $alt2_phone,
+                'primary_address' => $primary_address,
+                'secondary_address' => $secondary_address,
+                'primary_email' => $primary_email,
+                'secondary_email' => $secondary_email
+            ];
+            return $this->response($data, $history);
+        }
     }
 }

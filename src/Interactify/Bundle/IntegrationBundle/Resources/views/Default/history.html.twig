@@ -1,9 +1,18 @@
-{{ history }}
-
-{% for entry in history %}
-    <div class="history">
-        <span>TS: {{ entry.createdAt }}</span>
-        <span>Subject: {{ entry.subject }}</span>
-        <br/>
+<div class="row">
+    <div class="col-md-12"><br>
+        <div class="panel">
+            <div class="panel-body">
+                <div class="timeline-2">
+                    {% for entry in history %}
+                        <div class="time-item">
+                            <div class="item-info">
+                                <div class="text-muted">{{ entry.createdAt }}</div>
+                                <p><strong><a href="#" class="text-info">{{ entry.subject }}</p>
+                            </div>
+                        </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
     </div>
-{% endfor %}
+</div>
