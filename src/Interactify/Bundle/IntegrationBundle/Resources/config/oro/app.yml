@@ -1,10 +1,6 @@
 security:
     firewalls:
-        dev:
-             pattern: ^/interactify
-             security:                       false
-             anonymous:                      true
-        prod:
+        interactify:
              pattern: ^/interactify
              security:                       false
              anonymous:                      true
